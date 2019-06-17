@@ -1,0 +1,96 @@
+// souffle -D. lifetimes.dl
+// souffle -D. -explain lifetimes.dl
+//       explain error("result", "longest", "L17")
+
+.symbol_type point
+.comp DiGraph {
+    .decl point(a:point)
+    .decl edge(a:point,b:point)
+
+    point(X) :- edge(X,_).
+    point(X) :- edge(_,X).
+
+    .decl reach(a:point,b:point)
+    reach(X,X) :- point(X).
+    reach(X,Y) :- edge(X,Y).
+    reach(X,Z) :- reach(X,Y),reach(Y,Z).
+
+    // Unused:
+    // .decl clique(a:point,b:point)
+    // clique(X,Y) :- reach(X,Y),reach(Y,X).
+}
+
+// The Control Flow Graph tells us whether control can flow from point A to point B.
+// This is better labeled the data flow graph, because it describes whether a piece
+// of data's lifetime, via borrowing or scope, is "live" as any given point. The 
+// points are line numbers in the program.
+.init CFG = DiGraph
+CFG.edge("L10","L12").
+CFG.edge("L12","L14").
+CFG.edge("L14","L1").
+CFG.edge("L1","L2").
+CFG.edge("L2","L3").
+CFG.edge("L3","L4").
+CFG.edge("L4","L7").
+CFG.edge("L2","L5").
+CFG.edge("L5","L6").
+CFG.edge("L6","L7").
+CFG.edge("L7","L15").
+CFG.edge("L15","L17").
+CFG.edge("L17","L18").
+CFG.edge("L18","L20").
+
+// We conflate the loan with the object that created and owns it.
+.symbol_type reference
+.symbol_type loan
+.type referrer = loan | reference
+// These are inputs and are defined by either the object going out of scope
+// or the object being overwritten.
+.decl object_born(obj:loan, pt:point)
+object_born("string1", "L10").
+object_born("string2", "L14").
+.decl object_dies(obj:loan, pt:point)
+object_dies("string1", "L20").
+object_dies("string2", "L17").
+
+// What borrows what at which point?
+.decl borrows(var:referrer, ln:referrer, pt:point)
+// Every object owner borrows from itself.
+borrows(obj, obj, pt) :- object_born(obj, pt).
+// This is input from AST. Each has a corresponding `drops` line.
+// We create virtual lones: loan1 and loan2 represent the object that x and y 
+// reference respectively, which potentially differs from call site to call site; 
+// loan3 is a virtual reference representing the rvalue of the `if` statement.
+borrows("x", "loan1", "L1"). // From inside longest, at entry
+borrows("y", "loan2", "L1"). // From inside longest, at entry
+borrows("loan3", "x", "L3"). // From inside longest, if x returned
+borrows("loan3", "y", "L5"). // From inside longest, if y returned
+// The loan longest is a virtual reference representing the rvalue returned
+// by `longest`. Could call it something else so longest isn't overloaded.
+borrows("longest", "loan3", "L7").
+borrows("result", "longest", "L15"). // Recieves loan from longest
+// This is input computed from the call site:
+borrows("loan1", "string1", "L1").
+borrows("loan2", "string2", "L1").
+
+// An object that either goes out of scope, is assigned to, or otherwise cannot hold
+// its previous borrow any more is "dropped". The referrer `dropping` is dropping 
+// it's value at location `at`.
+.decl drops(dropping:referrer, ln:referrer, at:point)
+// An object drops its own "loan" when it dies.
+drops(obj, obj, at) :- object_dies(obj, at).
+// An object drops its loan when it is borrowed from. The last `borrows(_, ln, _)`. 
+// Can handle a borrow and drop at the same point, which happens in the case of 
+// virtual references.
+drops(obj, ln, at) :-
+        borrows(obj, ln, _),
+        borrows(_, obj, at),
+        obj!=ln. // Exclude self borrowing.
+
+// This is input.
+drops("x", "loan1", "L3"). // From inside longest, if x returned
+drops("x", "loan1", "L7"). // From inside longest, if y returned
+drops("y", "loan2", "L5"). // From inside longest, if y returned
+drops("y", "loan2", "L7"). // From inside longest, if x returned
+drops("result", "longest", "L18"). // println borrows result
+

@@ -62,7 +62,7 @@ The boxes labeled with `S#` represent either lifetimes or regions in which a ref
 
 The sourcecode data needs to be input into the program. In particular, the input consists of:
 
-1. The control flow graph. The *control flow graph* tells us whether program control can flow from point A to point B during execution.  The  points are program statements, which we identify with line numbers in the source code for simplicity. We write `CFG.edge("L3","L4”)`{:.rust} to mean control flows from line `L3` to line `L4`. The control flow graph itself can be constructed by computing reachability along edges, but we don’t compute it directly, so CFG is only an abstraction. What we actually construct is the *data flow graph* in our application, because it describes whether a piece of data's lifetime, via borrowing or scope, is "live" at any given point.
+1. The [control flow graph](https://en.wikipedia.org/wiki/Control-flow_graph). The *control flow graph* tells us whether program control can flow from point A to point B during execution.  The  points are program statements, which we identify with line numbers in the source code for simplicity. We write `CFG.edge("L3","L4”)`{:.rust} to mean control flows from line `L3` to line `L4`. The control flow graph itself can be constructed by computing reachability along edges, but we don’t compute it directly, so CFG is only an abstraction. What we actually construct is the *data flow graph* in our application, because it describes whether a piece of data's lifetime, via borrowing or scope, is "[live](https://en.wikipedia.org/wiki/Live_variable_analysis)" at any given point.
 2. Where a loan is created together with some kind of identifier. We write `object_born("string1", "L10")`{:.rust} and, for simplicity, use the name of the original variable that created the loan as the name of the loan.
 3. Where the loan dies, i.e. where it’s owner drops the loan. We write `object_dies("string1", "L20")`{:.rust}.
 4. Where which reference borrows from which other reference. We write `borrows("loan_if", "x", "L3”)`{:.rust}. Note that which loan is borrowed is unnecessary—that is inferred by the algorithm.
@@ -133,7 +133,18 @@ error_already_borrowed(ref1, ln, errpt, ref2, borpt) :- references(ref1, ln, err
                                 references(ref2, ln, borpt).
 ```
 
-And that’s pretty much it, modulo a few details. It’s not too hard to compute lifetime constraints from this, for example, `lifetime(ref2)`$\subset$`lifetime(ref1)`.
+A Voilá!
+
+```
+Error: 'string2' is dropped at L17, but 'result' still holds the loan it borrowed at L15.
+```
+
+And that’s pretty much it, modulo a few details you can find in the file `lifetimes.dl`. From here it’s not too hard to compute lifetime constraints, for example, `lifetime(ref2)`$\subset$`lifetime(ref1)`.
+
+# Mathematical Points
+
+* The body of a function completely determines the most general lifetime annotations of the function.
+* The lifetime
 
 # To Do
 
@@ -153,7 +164,7 @@ The last three items demonstrate how much the Rust compiler could do that it cur
 
 # License
 
-Created by Robert Jacobson on 16 June 2019. The example Rust source code is from The Rust Programming Language, which is part of The Rust Project. The Rust Project is dual-licensed under Apache 2.0 and MIT terms.
+Created by Robert Jacobson on 16 June 2019. I consider this too trivial to need a license, but I’m giving it the MIT License just in case someone needs one.  The example Rust source code is from The Rust Programming Language, which is part of The Rust Project. The Rust Project is dual-licensed under Apache 2.0 and MIT terms.
 
 Copyright (c) 2019 Robert Jacobson.        
 

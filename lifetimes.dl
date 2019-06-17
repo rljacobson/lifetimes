@@ -1,6 +1,46 @@
+/*
+Created by Robert Jacobson on 16 June 2019.
+
+Lifetime Inference
+Description: An implementation of lifetime inference for the Rust programming
+             language.
+
+Copyright (c) 2019 Robert Jacobson.        
+The MIT License
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to
+deal in the Software without restriction, including without limitation the
+rights to use, copy, modify, merge, publish, distribute, sublicense, and/or
+sell copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
+IN THE SOFTWARE.
+*/
+
+
 // souffle -D. lifetimes.dl
 // souffle -D. -explain lifetimes.dl
 //       explain error("result", "longest", "L17")
+
+/*
+ToDo: 
+1. Make a distinction between mutable and immutable borrows. 
+2. Better examples of multiple mutable borrows.
+3. Is it easy to hook this into a Rust parser? If so, do it.
+4. Generate inferred lifetimes.
+5. Allow a (mutable) borrow if the previous (immutable) borrow will
+   no longer be used.
+*/
 
 .symbol_type point
 .comp DiGraph {
@@ -10,10 +50,11 @@
     point(X) :- edge(X,_).
     point(X) :- edge(_,X).
 
-    .decl reach(a:point,b:point)
-    reach(X,X) :- point(X).
-    reach(X,Y) :- edge(X,Y).
-    reach(X,Z) :- reach(X,Y),reach(Y,Z).
+    // Unused:
+    // .decl reach(a:point,b:point)
+    // reach(X,X) :- point(X).
+    // reach(X,Y) :- edge(X,Y).
+    // reach(X,Z) :- reach(X,Y),reach(Y,Z).
 
     // Unused:
     // .decl clique(a:point,b:point)
@@ -44,8 +85,9 @@ CFG.edge("L18","L20").
 .symbol_type reference
 .symbol_type loan
 .type referrer = loan | reference
+
 // These are inputs and are defined by either the object going out of scope
-// or the object being overwritten.
+// or the object being initialized or overwritten.
 .decl object_born(obj:loan, pt:point)
 object_born("string1", "L10").
 object_born("string2", "L14").
@@ -57,40 +99,112 @@ object_dies("string2", "L17").
 .decl borrows(var:referrer, ln:referrer, pt:point)
 // Every object owner borrows from itself.
 borrows(obj, obj, pt) :- object_born(obj, pt).
-// This is input from AST. Each has a corresponding `drops` line.
-// We create virtual lones: loan1 and loan2 represent the object that x and y 
-// reference respectively, which potentially differs from call site to call site; 
-// loan3 is a virtual reference representing the rvalue of the `if` statement.
-borrows("x", "loan1", "L1"). // From inside longest, at entry
-borrows("y", "loan2", "L1"). // From inside longest, at entry
-borrows("loan3", "x", "L3"). // From inside longest, if x returned
-borrows("loan3", "y", "L5"). // From inside longest, if y returned
+// This is input from AST. Each has either a corresponding `drops` line or a `borrows`
+// line in which the reference gives up the loan it has borrowed. We create virtual  
+// lones for temporaries/rvalues: loan_if is a virtual reference representing the 
+// rvalue of the `if` statement that is eventually returned. Could have cut it out.
+borrows("loan_if", "x", "L3"). // From inside longest, if x returned
+borrows("loan_if", "y", "L5"). // From inside longest, if y returned
 // The loan longest is a virtual reference representing the rvalue returned
-// by `longest`. Could call it something else so longest isn't overloaded.
-borrows("longest", "loan3", "L7").
+// by `longest`. Could call it something else so longest isn't overloaded, but who cares.
+borrows("longest", "loan_if", "L7").
 borrows("result", "longest", "L15"). // Recieves loan from longest
 // This is input computed from the call site:
-borrows("loan1", "string1", "L1").
-borrows("loan2", "string2", "L1").
+borrows("x", "string1", "L1").
+borrows("y", "string2", "L1").
 
-// An object that either goes out of scope, is assigned to, or otherwise cannot hold
-// its previous borrow any more is "dropped". The referrer `dropping` is dropping 
-// it's value at location `at`.
+// The object either goes out of scope, is assigned to, or otherwise cannot hold
+// its previous borrow any more. The reference `dropping` is dropping it's value at 
+// location `at`.
 .decl drops(dropping:referrer, ln:referrer, at:point)
 // An object drops its own "loan" when it dies.
 drops(obj, obj, at) :- object_dies(obj, at).
-// An object drops its loan when it is borrowed from. The last `borrows(_, ln, _)`. 
-// Can handle a borrow and drop at the same point, which happens in the case of 
-// virtual references.
+// An object drops its loan when it is borrowed from. This is the semantics for 
+// mutable borrows, but it's the more interesting case, so we do this to show how
+// it would go.
+// ToDo: I think this needs fixing.
 drops(obj, ln, at) :-
         borrows(obj, ln, _),
         borrows(_, obj, at),
         obj!=ln. // Exclude self borrowing.
 
-// This is input.
-drops("x", "loan1", "L3"). // From inside longest, if x returned
-drops("x", "loan1", "L7"). // From inside longest, if y returned
-drops("y", "loan2", "L5"). // From inside longest, if y returned
-drops("y", "loan2", "L7"). // From inside longest, if x returned
+// This is input computed from borrows and references leaving scope.
+// Note that we already have a rule built in that says a reference
+// drops its borrow if another reference borrows from it.
+drops("x", "string1", "L3"). // From inside longest, if x returned
+drops("x", "string1", "L7"). // From inside longest, if y returned
+drops("y", "string2", "L5"). // From inside longest, if y returned
+drops("y", "string2", "L7"). // From inside longest, if x returned
 drops("result", "longest", "L18"). // println borrows result
 
+// Variable var is borrowing loan ln at point p.
+.decl borrowing(var:referrer, ln:referrer, p:point)
+borrowing(var, ln, p) :- borrows(var, ln, p).
+// Then propogate to next statement.
+borrowing(var, ln, p2) :- CFG.edge(p1, p2),
+                        borrowing(var, ln, p1),
+                        !drops(var, ln, p2).
+
+// Conceptually, if var borrows ln and ln is a reference, then we need the set
+// of all p such that borrowing(var, ln, p) to be a subset of the set of all p
+// such that borrowing(ln, _, p). In other words, the lifetime of var's borrow 
+// must be a subset of the lifetime of ln's borrow.
+
+.decl references(var:referrer, ln:referrer, pt:point)
+references(var, var, pt) :- object_born(var, pt).
+// Propogate to the next statement.
+references(var, ln, pt) :- CFG.edge(pred, pt),
+                        borrowing(var, ref, pred),
+                        references(var, ln, pred),
+                        borrowing(var, ref, pt).
+// Propogate across a borrow.
+references(var, ln, pt) :- CFG.edge(pred, pt),
+                        borrowing(ref1, _, pred),
+                        references(ref1, ln, pred),
+                        borrowing(var, ref1, pt).
+
+// A dangling pointer occurs when an object dies while something is still 
+// referencing it. From the conceptual perspective of sets, an error occurs
+// when we find a point p, a reference ref1, and a loan ref2 such that
+// borrowing(ref1, ref2, p) but NOT borrowing(ref2, ln, p) for some loan.
+// In symbols, $S1 \subset S2$ is a constraint, but $p\in S1\setminus S2$.
+// To be fancy, we also compute the point at which the
+// reference first borrows the object.
+// ln dies at pt, but var still holds the loan it borrowed at borpt.
+.decl error_use_freed(var: reference, ln:loan, errpt:point, borpt:point) 
+error_use_freed(var, ln, errpt, borpt) :- references(var, ln, errpt),
+                        object_dies(ln, errpt),
+                        references(var, ln, borpt),
+                        borrows(var, _, borpt).
+
+// It is also an error to have distinct references reference the same object.
+// Again, we're fancy and compute the reference already pointing to the object
+// and where that reference borrowed from the object.
+// I don't actually make a distinction between mutable borrows and immutable
+// borrows, so this error isn't true to life. It is just to show how it would
+// work.
+// ref1 tries to borrow ln at errpt, but ref2 has already borrowed ln at borpt.
+.decl error_already_borrowed(ref1:reference, ln:loan, errpt:point, 
+                                ref2:reference, borpt:point)
+error_already_borrowed(ref1, ln, errpt, ref2, borpt) :- references(ref1, ln, errpt),
+                                borrows(ref1, ln, errpt),
+                                references(ref2, ln, errpt), ref2!=ref1,
+                                borrows(ref2, ref3, borpt), ref2!=ref3,
+                                references(ref2, ln, borpt).
+
+.type String
+.decl error_msg(msg:String)
+error_msg( cat(cat(cat(cat(cat(cat(cat(cat(cat(cat("Error: '", ref1), "' tries to borrow '"),
+            ln), "' at "), errpt), ", but '"),  ref2), "' still holds the loan it borrowed at "), 
+            borpt), ".")) :- error_already_borrowed(ref1, ln, errpt, ref2, borpt).
+error_msg( cat(cat(cat(cat(cat(cat(cat(cat("Error: '", ln), "' is dropped at "), pt), 
+            ", but '"), var), "' still holds the loan it borrowed at "), borpt), ".")) 
+            :- error_use_freed(var, ln, pt, borpt).
+
+// .output drops
+// .output borrows
+// .output borrowing
+// .output references
+// .output error_use_freed
+// .output error_already_borrowed
+.output error_msg

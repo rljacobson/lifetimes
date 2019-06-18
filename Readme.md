@@ -27,7 +27,7 @@ The `-t explain` flag drops you into a command line. Type `explain` followed by 
 
 Last Monday I decided to take a look at [Rust](https://www.rust-lang.org/) for the first time. Rust has the notion of [lifetimes](https://doc.rust-lang.org/book/ch10-03-lifetime-syntax.html) which is a mechanism to prohibit errors like [use after free](https://www.owasp.org/index.php/Using_freed_memory) and [race conditions](https://en.wikipedia.org/wiki/Race_condition). However, the Rust compiler requires the programmer to figure out the lifetimes manually. Programmers new to Rust find the “borrow checker,“ the component of the compiler that checks lifetime correctness, to be a challenging learning curve. The internet is full of people “[fighting the borrow checker](https://m-decoster.github.io/2017/01/16/fighting-borrowchk/).”
 
-A lifetime is a type. The Rust compiler infers types, but it doesn’t infer lifetimes.[^1] Why not? I don’t know. It seems like such a thing would be a priority considering how big of a barrier it is to new users. I decided to write my own lifetime inference engine.
+A lifetime is a type. The Rust compiler infers types, but it doesn’t infer lifetimes.<span id="a1"><sup>[1](#f1)</sup></span> Why not? I don’t know. It seems like such a thing would be a priority considering how big of a barrier it is to new users. I decided to write my own lifetime inference engine.
 
 ## How does it work?
 
@@ -38,7 +38,7 @@ fn longest(x: &str, y: &str) -> &str { // ━━━━━━┱───┐ -x a
     if x.len() > y.len() { //   x's borrow    S4┃ S5│ 
         x     //                overlaps with   ┃   │ -loan_if = x, x drops.
     } else {  //                y's borrow      ┃   │
-        y     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╋───┼ -loan_if = y, y drops.
+        y     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╋───┤ -loan_if = y, y drops.
     } // either x or y is still borrowing here  ┃   │
 } // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┹───┘ -result borrows here, while
                                                    //  x and y go out of scope.
@@ -112,9 +112,9 @@ references(ref2, ln, pt) :- CFG.edge(p1, p2),
 
 ## Detecting Errors
 
-Conceptually, if `ref2` borrows from `ref1`, then we need the set $S_2:=\{$`p` $\in$ Program $\mid$ `borrowing(ref2, ref1, p)`$\}$ to be a subset of the set $S_1:=\{$`p` $\in$ Program $\mid$ `borrowing(ref1, _, p)`$\}$, that is, $S_2\subset S_1$. Said another way, the lifetime of `ref2`'s borrow must be a subset of the lifetime of `ref1`'s borrow.[^2]
+Conceptually, if `ref2` borrows from `ref1`, then we need the set S<sub>2</sub> := \{ `p` ∈ Program |  `borrowing(ref2, ref1, p)` \} to be a subset of the set S<sub>1</sub> := \{ `p`  |  `borrowing(ref1, _, p)` \}, that is, S<sub>1</sub>⊂ S<sub>2</sub> . Said another way, the lifetime of `ref2`'s borrow must be a subset of the lifetime of `ref1`'s borrow.<span id="a2"><sup>[2](#f2)</sup></span>
 
-A dangling pointer occurs when the loan dies while something is still referencing it, perhaps because its owner goes out of scope. From the conceptual perspective of sets, an error occurs when we find a point `p`, a reference `ref`, and a loan `ln` such that `references(ref, ln, p)`{:.prolog} but NOT `borrowing(ln, ln, p)`{:.prolog} (the owner drops `ln`). In symbols, $S1 \subset S2$ is a constraint, but `p`$\in S_1\setminus S_2$, contradicting the constraint. To be fancy, we also compute the point at which the reference first borrows the object.
+A dangling pointer occurs when the loan dies while something is still referencing it, perhaps because its owner goes out of scope. From the conceptual perspective of sets, an error occurs when we find a point `p`, a reference `ref`, and a loan `ln` such that `references(ref, ln, p)`{:.prolog} but NOT `borrowing(ln, ln, p)`{:.prolog} (the owner drops `ln`). In symbols, S<sub>1</sub>⊂ S<sub>2</sub>  is a constraint, but `p` ∈ S<sub>1</sub>∖ S<sub>2</sub>, contradicting the constraint. To be fancy, we also compute the point at which the reference first borrows the object.
 
 ```prolog
 error_use_freed(var, ln, errpt, borpt) :- references(var, ln, errpt),
@@ -133,22 +133,24 @@ error_already_borrowed(ref1, ln, errpt, ref2, borpt) :- references(ref1, ln, err
                                 references(ref2, ln, borpt).
 ```
 
-A Voilá!
+Et voilà!
 
 ```
 Error: 'string2' is dropped at L17, but 'result' still holds the loan it borrowed at L15.
 ```
 
-And that’s pretty much it, modulo a few details you can find in the file `lifetimes.dl`. From here it’s not too hard to compute lifetime constraints, for example, `lifetime(ref2)`$\subset$`lifetime(ref1)`.
+And that’s pretty much it, modulo a few details you can find in the file `lifetimes.dl`. From here it’s not too hard to compute lifetime constraints, for example, `lifetime(ref2)` ⊂ `lifetime(ref1)`.
 
 # Mathematical Points
 
-* The body of a function completely determines the most general lifetime annotations of the function.
-* The lifetime
+* The body of a function completely determines the most general lifetime annotations of the function signature.
+* The lifetimes in a function signature affect the code at the call site but not the other way around. In other words, lifetimes are synthesized from the bottom up.
+* Lifetimes *are* types, and lifetime inference *is exactly the same as type inference.* To determine the most general lifetime annotations for a function signature, one just unifies the lifetimes of the return value and program arguments.
+* I suspect lifetime inference is complete and can be done in linear time.
 
 # To Do
 
-The last three items demonstrate how much the Rust compiler could do that it currently isn’t doing. The Rust compiler is far more restrictive than necessary.
+The last three items below demonstrate how much the Rust compiler could do that it currently isn’t doing. The Rust compiler is far more restrictive than necessary.
 
 1. Make a distinction between mutable and immutable borrows. 
 2. Better examples of multiple mutable borrows.
@@ -157,8 +159,11 @@ The last three items demonstrate how much the Rust compiler could do that it cur
 5. Allow a (mutable) borrow if the previous (immutable) borrow will no longer be used.
 6. Allow a borrow after a loan die if the borrow will no longer be used.
 
-[^1]: This is a convenient lie.
-[^2]: This is also a convenient lie.
+----
+
+ <span id="f1">1: </span>This is a convenient lie. [↩](#a1)
+
+<span id="f2">2: </span>This is also a convenient lie.  [↩](#a2)
 
 ---
 

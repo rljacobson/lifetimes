@@ -42,6 +42,9 @@ ToDo:
    no longer be used.
 */
 
+.symbol_type reference
+.symbol_type loan
+.type referrer = loan | reference
 .symbol_type point
 .comp DiGraph {
     .decl point(a:point)
@@ -60,6 +63,8 @@ ToDo:
     // .decl clique(a:point,b:point)
     // clique(X,Y) :- reach(X,Y),reach(Y,X).
 }
+
+// ------ Input and Their Fundamental Relations -------
 
 // The Control Flow Graph tells us whether control can flow from point A to point B.
 // This is better labeled the data flow graph, because it describes whether a piece
@@ -81,11 +86,6 @@ CFG.edge("L7","L15").
 CFG.edge("L15","L17").
 CFG.edge("L17","L18").
 CFG.edge("L18","L20").
-
-// We conflate the loan with the object that created and owns it.
-.symbol_type reference
-.symbol_type loan
-.type referrer = loan | reference
 
 // These are inputs and are defined by either the object going out of scope
 // or the object being initialized or overwritten.
@@ -157,6 +157,8 @@ drops("y", "string2", "L5"). // From inside longest, if y returned
 drops("y", "string2", "L7"). // From inside longest, if x returned
 drops("result", "longest", "L18"). // println borrows result
 
+// ------ Data Flow Graph -------
+
 // Variable var is borrowing loan ln at point p.
 .decl borrowing(ref:reference, ref2:reference, p:point)
 // borrowing(ref, ref, pt) :- reference_owns(ref, _, pt). // bootstrap
@@ -183,6 +185,8 @@ references(ref1, ln, current) :- CFG.edge(pred, current),
                         borrows(ref1, ref0, pred),
                         references(ref0, ln, pred),
                         borrowing(ref1, ref0, current).
+
+// ------ Error Detection -------
 
 // A dangling pointer occurs when an object dies while something is still 
 // referencing it. From the conceptual perspective of sets, an error occurs
@@ -218,18 +222,17 @@ error_already_borrowed(ref1, ln, errpt, ref3, ref2, borpt) :-
 
 .type String
 .decl error_msg(msg:String)
-error_msg( cat(cat(cat(cat(cat(cat(cat(cat(cat(cat(cat(cat("Error: '", ref1), "' tries to borrow '"),
-            ln), "' from '"), ref3), "' at "), errpt), ", but '"),  ref2), "' still holds the loan it borrowed at "), 
-            borpt), ".")) :- error_already_borrowed(ref1, ln, errpt, ref3, ref2, borpt).
-error_msg( cat(cat(cat(cat(cat(cat(cat(cat(cat(cat("Error: '", ln), "' is dropped at "), errpt), 
-            ", but '"), ref2), "' still holds a reference to it, which it borrowed from '"), ref1), 
-            "' at "), borpt), ".")) :- error_use_freed(ref2, ln, errpt, ref1, borpt).
+error_msg( cat("Error: '", ref1, "' tries to borrow '", ln, "' from '", ref3, "' at ", 
+            errpt, ", but '",  ref2, "' still holds the loan it borrowed at ", 
+            borpt, ".")) :- error_already_borrowed(ref1, ln, errpt, ref3, ref2, borpt).
+error_msg( cat("Error: '", ln, "' is dropped at ", errpt, ", but '", ref2, 
+            "' still holds a reference to it, which it borrowed from '", ref1, 
+            "' at ", borpt, ".")) :- error_use_freed(ref2, ln, errpt, ref1, borpt).
 
-.output drops
-.output borrows
-.output borrowing
-.output references
-.output object_dies
+// .output drops
+// .output borrows
+// .output borrowing
+// .output object_dies
 // .output error_use_freed
 // .output error_already_borrowed
 .output error_msg

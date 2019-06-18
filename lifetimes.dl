@@ -72,8 +72,9 @@ CFG.edge("L14","L1").
 CFG.edge("L1","L2").
 CFG.edge("L2","L3").
 CFG.edge("L3","L4").
-CFG.edge("L4","L7").
-CFG.edge("L2","L5").
+CFG.edge("L4","L6").
+CFG.edge("L2","L4").
+CFG.edge("L4","L5").
 CFG.edge("L5","L6").
 CFG.edge("L6","L7").
 CFG.edge("L7","L15").
@@ -88,17 +89,33 @@ CFG.edge("L18","L20").
 
 // These are inputs and are defined by either the object going out of scope
 // or the object being initialized or overwritten.
-.decl object_born(obj:loan, pt:point)
-object_born("string1", "L10").
-object_born("string2", "L14").
-.decl object_dies(obj:loan, pt:point)
-object_dies("string1", "L20").
-object_dies("string2", "L17").
+.decl owner_created(ref:reference, pt:point)
+// These are object owners. In real life, we would also track moves from one owner to another.
+owner_created("string1", "L10").
+owner_created("string2", "L14").
+
+.decl object_born(ref:loan, pt:point)
+object_born(cat(refr, "_val"), pt) :- owner_created(refr, pt).
+
+// Just for convenience:
+.decl reference_owns(ref:reference, ln:loan, at:point)
+reference_owns(refr, ln, pt) :- owner_created(refr, pt), object_born(ln, pt).
+// These are inputs:
+.decl owner_destroyed(ref:reference, pt:point)
+owner_destroyed("string1", "L20").
+owner_destroyed("string2", "L17").
+.decl object_dies(ln:loan, at:point)
+// This would need to be adjusted for moves.
+object_dies(ln, at) :- reference_owns(refr, ln, _), owner_destroyed(refr, at).
+
 
 // What borrows what at which point?
-.decl borrows(var:referrer, ln:referrer, pt:point)
+.decl borrows(ref1:reference, ref2:referrer, at:point)
 // Every object owner borrows from itself.
-borrows(obj, obj, pt) :- object_born(obj, pt).
+borrows(ref, ref, at) :- reference_owns(ref, _, at).
+// borrows("string1", "string1_val", "L10").
+// borrows("string2", "string2_val", "L14").
+
 // This is input from AST. Each has either a corresponding `drops` line or a `borrows`
 // line in which the reference gives up the loan it has borrowed. We create virtual  
 // lones for temporaries/rvalues: loan_if is a virtual reference representing the 
@@ -116,17 +133,20 @@ borrows("y", "string2", "L1").
 // The object either goes out of scope, is assigned to, or otherwise cannot hold
 // its previous borrow any more. The reference `dropping` is dropping it's value at 
 // location `at`.
-.decl drops(dropping:referrer, ln:referrer, at:point)
+.decl drops(dropping:reference, dropped:referrer, at:point)
 // An object drops its own "loan" when it dies.
-drops(obj, obj, at) :- object_dies(obj, at).
+drops(dropping, dropping, at) :- object_dies(_, at), owner_destroyed(dropping, at).
+// drops("string1", "string1_val", at) :- object_dies("string1_val", at).
+// drops("string2", "string2_val", at) :- object_dies("string2_val", at).
+
 // An object drops its loan when it is borrowed from. This is the semantics for 
 // mutable borrows, but it's the more interesting case, so we do this to show how
 // it would go.
-// ToDo: I think this needs fixing.
-drops(obj, ln, at) :-
-        borrows(obj, ln, _),
-        borrows(_, obj, at),
-        obj!=ln. // Exclude self borrowing.
+// ToDo: This... doesn't feel right.
+drops(ref1, ref2, at) :-
+        borrows(ref1, ref2, _),
+        borrows(_, ref1, at),
+        ref1!=ref2. // Exclude self borrowing.
 
 // This is input computed from borrows and references leaving scope.
 // Note that we already have a rule built in that says a reference
@@ -138,30 +158,31 @@ drops("y", "string2", "L7"). // From inside longest, if x returned
 drops("result", "longest", "L18"). // println borrows result
 
 // Variable var is borrowing loan ln at point p.
-.decl borrowing(var:referrer, ln:referrer, p:point)
-borrowing(var, ln, p) :- borrows(var, ln, p).
+.decl borrowing(ref:reference, ref2:reference, p:point)
+// borrowing(ref, ref, pt) :- reference_owns(ref, _, pt). // bootstrap
+borrowing(refr, ref2, p) :- borrows(refr, ref2, p).
 // Then propogate to next statement.
-borrowing(var, ln, p2) :- CFG.edge(p1, p2),
-                        borrowing(var, ln, p1),
-                        !drops(var, ln, p2).
+borrowing(refr, ref2, p2) :- CFG.edge(p1, p2),
+                        borrowing(refr, ref2, p1),
+                        !drops(refr, ref2, p1).
 
 // Conceptually, if var borrows ln and ln is a reference, then we need the set
 // of all p such that borrowing(var, ln, p) to be a subset of the set of all p
 // such that borrowing(ln, _, p). In other words, the lifetime of var's borrow 
 // must be a subset of the lifetime of ln's borrow.
 
-.decl references(var:referrer, ln:referrer, pt:point)
-references(var, var, pt) :- object_born(var, pt).
+.decl references(var:reference, ln:loan, pt:point)
+references(ref, ln, pt) :- reference_owns(ref, ln, pt). // bootstrap
 // Propogate to the next statement.
-references(var, ln, pt) :- CFG.edge(pred, pt),
+references(var, ln, current) :- CFG.edge(pred, current),
                         borrowing(var, ref, pred),
                         references(var, ln, pred),
-                        borrowing(var, ref, pt).
+                        borrowing(var, ref, current).
 // Propogate across a borrow.
-references(var, ln, pt) :- CFG.edge(pred, pt),
-                        borrowing(ref1, _, pred),
-                        references(ref1, ln, pred),
-                        borrowing(var, ref1, pt).
+references(ref1, ln, current) :- CFG.edge(pred, current),
+                        borrows(ref1, ref0, pred),
+                        references(ref0, ln, pred),
+                        borrowing(ref1, ref0, current).
 
 // A dangling pointer occurs when an object dies while something is still 
 // referencing it. From the conceptual perspective of sets, an error occurs
@@ -171,11 +192,13 @@ references(var, ln, pt) :- CFG.edge(pred, pt),
 // To be fancy, we also compute the point at which the
 // reference first borrows the object.
 // ln dies at pt, but var still holds the loan it borrowed at borpt.
-.decl error_use_freed(var: reference, ln:loan, errpt:point, borpt:point) 
-error_use_freed(var, ln, errpt, borpt) :- references(var, ln, errpt),
-                        object_dies(ln, errpt),
-                        references(var, ln, borpt),
-                        borrows(var, _, borpt).
+.decl error_use_freed(var: reference, ln:loan, errpt:point, ref1:reference, borpt:point) 
+error_use_freed(ref2, ln, errpt, ref1, borpt) :- 
+                        CFG.edge(prevpt, errpt),
+                        object_dies(ln, prevpt),
+                        references(ref2, ln, errpt), 
+                        references(ref1, ln, borpt),
+                        borrows(ref2, ref1, borpt).
 
 // It is also an error to have distinct references reference the same object.
 // Again, we're fancy and compute the reference already pointing to the object
@@ -184,27 +207,29 @@ error_use_freed(var, ln, errpt, borpt) :- references(var, ln, errpt),
 // borrows, so this error isn't true to life. It is just to show how it would
 // work.
 // ref1 tries to borrow ln at errpt, but ref2 has already borrowed ln at borpt.
-.decl error_already_borrowed(ref1:reference, ln:loan, errpt:point, 
+.decl error_already_borrowed(ref1:reference, ln:loan, errpt:point, ref3:reference,
                                 ref2:reference, borpt:point)
-error_already_borrowed(ref1, ln, errpt, ref2, borpt) :- references(ref1, ln, errpt),
-                                borrows(ref1, ln, errpt),
+error_already_borrowed(ref1, ln, errpt, ref3, ref2, borpt) :- 
+                                references(ref1, ln, errpt),
+                                borrows(ref1, ref3, errpt),
                                 references(ref2, ln, errpt), ref2!=ref1,
                                 borrows(ref2, ref3, borpt), ref2!=ref3,
                                 references(ref2, ln, borpt).
 
 .type String
 .decl error_msg(msg:String)
-error_msg( cat(cat(cat(cat(cat(cat(cat(cat(cat(cat("Error: '", ref1), "' tries to borrow '"),
-            ln), "' at "), errpt), ", but '"),  ref2), "' still holds the loan it borrowed at "), 
-            borpt), ".")) :- error_already_borrowed(ref1, ln, errpt, ref2, borpt).
-error_msg( cat(cat(cat(cat(cat(cat(cat(cat("Error: '", ln), "' is dropped at "), pt), 
-            ", but '"), var), "' still holds the loan it borrowed at "), borpt), ".")) 
-            :- error_use_freed(var, ln, pt, borpt).
+error_msg( cat(cat(cat(cat(cat(cat(cat(cat(cat(cat(cat(cat("Error: '", ref1), "' tries to borrow '"),
+            ln), "' from '"), ref3), "' at "), errpt), ", but '"),  ref2), "' still holds the loan it borrowed at "), 
+            borpt), ".")) :- error_already_borrowed(ref1, ln, errpt, ref3, ref2, borpt).
+error_msg( cat(cat(cat(cat(cat(cat(cat(cat(cat(cat("Error: '", ln), "' is dropped at "), errpt), 
+            ", but '"), ref2), "' still holds a reference to it, which it borrowed from '"), ref1), 
+            "' at "), borpt), ".")) :- error_use_freed(ref2, ln, errpt, ref1, borpt).
 
-// .output drops
-// .output borrows
-// .output borrowing
-// .output references
+.output drops
+.output borrows
+.output borrowing
+.output references
+.output object_dies
 // .output error_use_freed
 // .output error_already_borrowed
 .output error_msg

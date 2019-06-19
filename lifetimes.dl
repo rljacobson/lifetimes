@@ -108,7 +108,6 @@ owner_destroyed("string2", "L17").
 // This would need to be adjusted for moves.
 object_dies(ln, at) :- reference_owns(refr, ln, _), owner_destroyed(refr, at).
 
-
 // What borrows what at which point?
 .decl borrows(ref1:reference, ref2:referrer, at:point)
 // Every object owner borrows from itself.
@@ -172,7 +171,6 @@ borrowing(refr, ref2, p2) :- CFG.edge(p1, p2),
 // of all p such that borrowing(var, ln, p) to be a subset of the set of all p
 // such that borrowing(ln, _, p). In other words, the lifetime of var's borrow 
 // must be a subset of the lifetime of ln's borrow.
-
 .decl references(var:reference, ln:loan, pt:point)
 references(ref, ln, pt) :- reference_owns(ref, ln, pt). // bootstrap
 // Propogate to the next statement.

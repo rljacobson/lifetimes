@@ -1,0 +1,82 @@
+/*
+Created by Robert Jacobson on 18 June 2019.
+
+Print Strings
+Description: A library to create lists from predicates and strings from 
+             lists, and to print strings and lists of strings.
+
+Copyright (c) 2019 Robert Jacobson.        
+The MIT License
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to
+deal in the Software without restriction, including without limitation the
+rights to use, copy, modify, merge, publish, distribute, sublicense, and/or
+sell copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
+IN THE SOFTWARE.
+*/
+
+.symbol_type text
+.type NList = [
+  head : number,
+  tail : NList
+]
+.type TList = [
+  head : text,
+  tail : TList
+]
+
+// Print a string.
+.decl print(x:text)
+.output print
+// Souffle can't print lists.
+.decl printstringlist(txt:text, lst:TList)
+print(cat("[", first, ", ", txt)) :- printstringlist(txt, [first, nil]).
+printstringlist(cat(hd, ", ", txt), [i, j]) :- printstringlist(txt, [hd, [i, j]]).
+printstringlist(cat(i, "]"), tl) :- stringlist([i, tl]), printpred(i).
+//makestringlist([i, tl], [ord(i), _]), printpred(i), ord(i)=max ord(s): printpred(s).
+
+
+.decl ordbiger(i:text, j:number)
+ordbiger(s, -1) :- ord(s)=0, item(s).
+ordbiger(i, j) :- item(i), item(r), ord(r)=j, ord(i)=min t: {item(s), t=ord(s), t>j}.
+
+
+// Makes a list of strings
+.decl makestringlist(lst1:TList, lst2:NList)
+.decl stringlist(lst:TList)
+stringlist([i, tl]) :- makestringlist([i, tl], [ord(i), _]), listpred(i), ord(i)=max ord(s): listpred(s).
+makestringlist([i, nil], [ord(i),nil]) :- listpred(i), ord(i) = min ord(s) : listpred(s).
+makestringlist([i,tl], [ord(i), [j, lst]]) :- makestringlist(tl, [j, lst]), listpred(i), ordbiger(i, j).
+
+// Creates a list of all i satisfying listpred.
+// Usage:
+//      listpred(i) :- item(i)
+//      Then use stringlist([i,tl]), item(i) wherever you want.
+.decl listpred(i:text)
+listpred(i) :- printpred(i). // Make a list for all print predicates.
+
+// Prints a list of every i satisfying item(i).
+// Automatically makes listpred(i)
+// Usage: 
+//      printpred(i) :- item(i)
+.decl printpred(i:text)
+
+
+/// Test predicate:
+// .decl item(x:text)
+// item("one").
+// item("two").
+// item("three").
+// printpred(i) :- item(i).
